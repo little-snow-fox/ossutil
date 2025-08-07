@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	oss "github.com/aliyun/aliyun-oss-go-sdk/oss"
-        . "gopkg.in/check.v1"
+	. "gopkg.in/check.v1"
 )
 
 func (s *OssutilCommandSuite) TestRestoreObject(c *C) {
@@ -737,7 +737,7 @@ func (s *OssutilCommandSuite) TestBatchRestoreObject(c *C) {
 	objectStat = s.getStat(bucketName, objectNames[0], c)
 	c.Assert(objectStat["X-Oss-Storage-Class"], Equals, StorageArchive)
 	_, ok = objectStat["X-Oss-Restore"]
-	c.Assert(ok, Equals, false)
+	c.Assert(ok, Equals, true)
 
 	// batch restore with encoding
 	prefix := url.QueryEscape("恢复")
@@ -1034,7 +1034,7 @@ func (s *OssutilCommandSuite) TestRestoreObjectWithPayerError400(c *C) {
 		"accessKeyID":     &str,
 		"accessKeySecret": &str,
 		"stsToken":        &str,
-		"configFile":      &configFile,
+		"configFile":      &payerConfigFile,
 		"payer":           &requester,
 	}
 	_, err = cm.RunCommand(command, args, options)
@@ -1043,8 +1043,23 @@ func (s *OssutilCommandSuite) TestRestoreObjectWithPayerError400(c *C) {
 }
 
 func (s *OssutilCommandSuite) TestRestoreObjectWithPayer(c *C) {
-	bucketName := bucketNamePrefix + randLowStr(10)
+	bucketName := payerBucket + randLowStr(10)
 	s.putBucketWithStorageClass(bucketName, StorageArchive, c)
+	policy := `
+	{
+		"Version":"1",
+		"Statement":[
+			{
+				"Action":[
+					"oss:*"
+				],
+				"Effect":"Allow",
+				"Principal":["` + payerAccountID + `"],
+				"Resource":["acs:oss:*:*:` + bucketName + `", "acs:oss:*:*:` + bucketName + `/*"]
+			}
+		]
+	}`
+	s.putBucketPolicy(bucketName, policy, c)
 	s.createFile(uploadFileName, content, c)
 
 	//put object, with --payer=requester
@@ -1063,7 +1078,7 @@ func (s *OssutilCommandSuite) TestRestoreObjectWithPayer(c *C) {
 		"accessKeyID":     &str,
 		"accessKeySecret": &str,
 		"stsToken":        &str,
-		"configFile":      &configFile,
+		"configFile":      &payerConfigFile,
 		"payer":           &requester,
 	}
 	_, err = cm.RunCommand(command, args, options)
@@ -1082,7 +1097,7 @@ func (s *OssutilCommandSuite) TestRestoreObjectWithPayer(c *C) {
 		"accessKeyID":     &str,
 		"accessKeySecret": &str,
 		"stsToken":        &str,
-		"configFile":      &configFile,
+		"configFile":      &payerConfigFile,
 		"payer":           &requester,
 	}
 	_, err = cm.RunCommand(command, args, options)
@@ -1236,4 +1251,41 @@ func (s *OssutilCommandSuite) TestRestoreObjectWithConfigError(c *C) {
 	c.Assert(err, NotNil)
 	os.RemoveAll(restoreFileName)
 	s.removeBucket(bucketName, true, c)
+}
+
+// TestRestoreProducer test restoreProducer
+func (s *OssutilCommandSuite) TestRestoreProducer(c *C) {
+	chObjects := make(chan string, ChannelBuf)
+	chListError := make(chan error, 1)
+	var filters []filterOptionType
+	restoreCommand.restoreProducer("no_exist_file", chObjects, chListError, filters)
+	err := <-chListError
+	c.Assert(err, NotNil)
+	select {
+	case _, ok := <-chObjects:
+		testLogger.Printf("chObjects channel has closed")
+		c.Assert(ok, Equals, false)
+	default:
+		testLogger.Printf("chObjects no data")
+		c.Assert(true, Equals, false)
+	}
+
+	emptyContentFileName := "empty.txt"
+	os.Remove(emptyContentFileName)
+	s.createFile(emptyContentFileName, "     ", c)
+	chObjects2 := make(chan string, ChannelBuf)
+	chListError2 := make(chan error, 1)
+	restoreCommand.restoreProducer(emptyContentFileName, chObjects2, chListError2, filters)
+	err = <-chListError2
+	c.Assert(err, NotNil)
+	select {
+	case _, ok := <-chObjects2:
+		testLogger.Printf("chObjects channel has closed")
+		c.Assert(ok, Equals, false)
+	default:
+		testLogger.Printf("chObjects no data")
+		c.Assert(true, Equals, false)
+	}
+
+	os.Remove(emptyContentFileName)
 }

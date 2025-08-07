@@ -366,6 +366,7 @@ var setMetaCommand = SetMetaCommand{
 			OptionSignVersion,
 			OptionRegion,
 			OptionCloudBoxID,
+			OptionForcePathStyle,
 		},
 	},
 }
@@ -562,7 +563,7 @@ func (cmd *Command) parseHeaders(str string, isDelete bool) (map[string]string, 
 		if isDelete && value != "" {
 			return nil, fmt.Errorf("delete meta for object do no support value for header:%s, please set value:%s to empty", name, value)
 		}
-		if _, err := fetchHeaderOptionMap(headerOptionMap, name); err != nil && !strings.HasPrefix(strings.ToLower(name), strings.ToLower(oss.HTTPHeaderOssMetaPrefix)) {
+		if _, err := fetchHeaderOptionMap(headerOptionMap, name); err != nil && !strings.HasPrefix(strings.ToLower(name), "x-oss-") {
 			return nil, fmt.Errorf("unsupported header:%s, please try \"help %s\" to see supported headers", name, cmd.name)
 		}
 		headers[name] = value
@@ -852,13 +853,13 @@ func (sc *SetMetaCommand) setObjectMetaStatistic(objectFile string, monitor Moni
 }
 
 func (sc *SetMetaCommand) setObjectMetaProducer(objectFile string, chObjects chan<- string, chError chan<- error, filters []filterOptionType, options ...oss.Option) {
+	defer close(chObjects)
 	file, err := os.Open(objectFile)
 	if err != nil {
 		chError <- err
 		return
 	}
 	defer file.Close()
-
 	encodingType, _ := GetString(OptionEncodingType, sc.command.options)
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
@@ -866,19 +867,17 @@ func (sc *SetMetaCommand) setObjectMetaProducer(objectFile string, chObjects cha
 		object = strings.Trim(object, " ")
 		if object == "" {
 			chError <- fmt.Errorf("object can't be '' in --object-file")
-			break
+			return
 		}
 		if encodingType == URLEncodingType {
 			oldObject := object
 			if object, err = url.QueryUnescape(oldObject); err != nil {
 				chError <- fmt.Errorf("invalid object url: %s, object name is not url encoded, %s", oldObject, err.Error())
-				break
+				return
 			}
 		}
 		chObjects <- object
 	}
-
-	defer close(chObjects)
 	chError <- nil
 }
 
